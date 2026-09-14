@@ -3,10 +3,10 @@ AIGC:
   ContentProducer: '001191110102MAD55U9H0F10002'
   ContentPropagator: '001191110102MAD55U9H0F10002'
   Label: '1'
-  ProduceID: 'eb0d0e53-a64e-468a-a708-931e8060ebc1'
-  PropagateID: 'eb0d0e53-a64e-468a-a708-931e8060ebc1'
-  ReservedCode1: 'e7bf65e6-130e-4ea2-9165-76b9b2105868'
-  ReservedCode2: 'e7bf65e6-130e-4ea2-9165-76b9b2105868'
+  ProduceID: 'b5d06d38-389a-4ea3-95bf-ecae7c269c43'
+  PropagateID: 'b5d06d38-389a-4ea3-95bf-ecae7c269c43'
+  ReservedCode1: '06c5b393-0566-40d5-b750-e7698b69af15'
+  ReservedCode2: '06c5b393-0566-40d5-b750-e7698b69af15'
 ---
 
 # CyDrive 改进日志
@@ -14,6 +14,12 @@ AIGC:
 本项目 fork 自 [thecynetx/CyDrive](https://github.com/thecynetx/CyDrive)，在保留原作者功能的基础上，针对国内网络环境和实际使用体验做了以下改进。
 
 ## 主要改进
+
+### 0. 启动频道验证与双向删除同步（2026-09 新增）
+- 启动时用 bot 兼容 API 验证目标频道/群组可达，杜绝 `Could not find the input entity` 首次上传报错。
+- 同时支持普通群组 ID（`-` 开头）与超级群组/频道 ID（`-100` 开头）。
+- 上传失败时保留本地缓存源文件（原先会被无条件删除）。
+- 新增 Telegram 删除事件监听：TG 端"为所有人删除"消息后，虚拟盘对应记录自动清除；数据库层支持按消息 ID 批量删除（含多分块大文件的 chunk 记录）。与原有的"虚拟盘删除同步删 TG 消息"构成双向闭环。
 
 ### 1. SOCKS5 代理支持（可配置）
 - 将 Telegram MTProto 连接代理从硬编码改为读取 `config.json`。
