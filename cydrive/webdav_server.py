@@ -138,21 +138,65 @@ class VirtualTelegramFile(DAVNonCollection):
                     loop = getattr(self.telegram_engine, "loop", None) or self.telegram_engine.client.loop
                     if loop and loop.is_running():
                         print(f"📤 [WebDAV Upload Trigger] Queuing {clean_path} ({file_size // 1024} KB) for Telegram Cloud upload...")
-                        asyncio.run_coroutine_threadsafe(
-                            self.telegram_engine.upload_file(local_cached, clean_path),
-                            loop
-                        )
+                        try:
+                            future = asyncio.run_coroutine_threadsafe(
+                                self.telegram_engine.upload_file(local_cached, clean_path, delete_source=True),
+                                loop
+                            )
+                            def _on_upload_done(fut):
+                                try:
+                                    msg_id = fut.result(timeout=300)
+                                    if msg_id:
+                                        print(f"✅ [WebDAV Upload Done] {clean_path} -> Telegram msg_id {msg_id}")
+                                    else:
+                                        print(f"❌ [WebDAV Upload Failed] {clean_path} did not return msg_id")
+                                except Exception as e:
+                                    print(f"❌ [WebDAV Upload Callback Error] {clean_path}: {e}")
+                            future.add_done_callback(_on_upload_done)
+                        except Exception as e:
+                            print(f"⚠️ [WebDAV Upload Error] Could not schedule upload for {clean_path}: {e}")
                     else:
                         print("⚠️ [WebDAV Warning] Telegram event loop is not running.")
 
     def handle_delete(self):
         """Handles file deletion."""
         rel_path = "/" + self.path.strip("/").replace("\\", "/")
+        file_record = self.db.get_file(rel_path)
+
+        # Delete associated Telegram messages
+        if file_record and self.telegram_engine and self.telegram_engine.is_connected:
+            import asyncio
+            loop = getattr(self.telegram_engine, "loop", None) or self.telegram_engine.client.loop
+            if loop and loop.is_running():
+                try:
+                    asyncio.run_coroutine_threadsafe(
+                        self.telegram_engine.delete_file_messages(file_record),
+                        loop
+                    )
+                except Exception as e:
+                    print(f"⚠️ [WebDAV Delete Warning] Could not schedule Telegram delete for {rel_path}: {e}")
+
         self.db.delete_file(rel_path)
         local_cached = self.cache_mgr.get_local_path(rel_path)
         if os.path.exists(local_cached):
             try:
                 os.remove(local_cached)
+            except OSError:
+                pass
+        return True
+
+    def handle_move(self, dest_path):
+        """Handles file rename/move."""
+        old_rel_path = "/" + self.path.strip("/").replace("\\", "/")
+        new_rel_path = "/" + dest_path.strip("/").replace("\\", "/")
+        self.db.rename_path(old_rel_path, new_rel_path)
+        # Move cached file if present
+        old_cached = self.cache_mgr.get_local_path(old_rel_path)
+        new_cached = self.cache_mgr.get_local_path(new_rel_path)
+        if os.path.exists(old_cached):
+            try:
+                os.makedirs(os.path.dirname(new_cached), exist_ok=True)
+                os.rename(old_cached, new_cached)
             except OSError:
                 pass
         return True
@@ -259,7 +303,30 @@ class VirtualTelegramFolder(DAVCollection):
 
     def handle_delete(self):
         rel_path = "/" + self.path.strip("/").replace("\\", "/")
-        self.db.delete_file(rel_path)
+
+        # Delete associated Telegram messages for all descendant files
+        if self.telegram_engine and self.telegram_engine.is_connected:
+            deleted_files = self.db.delete_folder_recursive(rel_path)
+            import asyncio
+            loop = getattr(self.telegram_engine, "loop", None) or self.telegram_engine.client.loop
+            if loop and loop.is_running():
+                for file_record in deleted_files:
+                    try:
+                        asyncio.run_coroutine_threadsafe(
+                            self.telegram_engine.delete_file_messages(file_record),
+                            loop
+                        )
+                    except Exception as e:
+                        print(f"⚠️ [WebDAV Delete Warning] Could not schedule Telegram delete for {file_record.get('rel_path')}: {e}")
+        else:
+            self.db.delete_folder_recursive(rel_path)
+        return True
+
+    def handle_move(self, dest_path):
+        """Handles folder rename/move, recursively updating children."""
+        old_rel_path = "/" + self.path.strip("/").replace("\\", "/")
+        new_rel_path = "/" + dest_path.strip("/").replace("\\", "/")
+        self.db.rename_path(old_rel_path, new_rel_path)
         return True
 
 

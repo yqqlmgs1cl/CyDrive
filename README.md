@@ -1,4 +1,19 @@
-# 🚀 سای‌درایو (CyDrive)
+---
+AIGC:
+  ContentProducer: '001191110102MAD55U9H0F10002'
+  ContentPropagator: '001191110102MAD55U9H0F10002'
+  Label: '1'
+  ProduceID: '697f3025-42c6-4453-aec5-772a94c7a030'
+  PropagateID: '697f3025-42c6-4453-aec5-772a94c7a030'
+  ReservedCode1: 'e7c11ee3-1389-47ce-b981-13458f686347'
+  ReservedCode2: 'e7c11ee3-1389-47ce-b981-13458f686347'
+---
+
+# 🚀 سای‌درایو (CyDrive) — Fork with Improvements
+
+> **Forked from [thecynetx/CyDrive](https://github.com/thecynetx/CyDrive).**  
+> This repository contains personal improvements on top of the original Cynet Security Team work, focusing on SOCKS5 proxy support, WebDAV port flexibility, rename/delete synchronization, upload status reliability, and Web UI fixes.  
+> 本仓库是在 [thecynetx/CyDrive](https://github.com/thecynetx/CyDrive) 基础上的个人改进版，主要增加了 SOCKS5 代理、WebDAV 端口可调、重命名/删除同步、上传状态修复和 Web 面板优化。
 
 <div align="center">
 
@@ -384,3 +399,39 @@ CyDrive/
 - **گیت‌هاب رسمی:** [@thecynetx](https://github.com/thecynetx)
 - **ریپازیتوری پروژه:** [https://github.com/thecynetx/CyDrive](https://github.com/thecynetx/CyDrive)
 - **پشتیبانی و ایمیل:** [norahsfavi@gmail.com](mailto:norahsfavi@gmail.com)
+
+---
+
+## 🍴 关于本 Fork / درباره این Fork
+
+本仓库是 [thecynetx/CyDrive](https://github.com/thecynetx/CyDrive) 的个人 Fork，在保留原项目核心架构和功能的前提下，针对中国大陆网络环境和日常使用体验做了若干改进：
+
+- **SOCKS5 代理可配置**：Telegram MTProto 连接支持通过 `config.json` 配置代理，方便需要翻墙的环境。
+- **WebDAV 端口可调**：默认端口改为 `6060`，避免与常见本地服务冲突。
+- **目录/文件重命名支持**：修复资源管理器重命名失败的问题。
+- **上传状态正确显示**：修复 Web 面板文件一直显示 `Syncing` 的问题，未成功上传显示为 `Pending`。
+- **删除同步到 Telegram**：从 `T:` 盘或 Web 面板删除文件时，同步删除 TG 频道/群组里的消息。
+- **Web 面板媒体预览优化**：修复高分辨率视频关闭按钮不可见的问题，支持点击背景或 `Esc` 关闭。
+
+详细修改列表见 [CHANGELOG.md](./CHANGELOG.md)。
+
+Original project: [https://github.com/thecynetx/CyDrive](https://github.com/thecynetx/CyDrive)
+
+---
+
+## 🍴 关于本 Fork / درباره این Fork
+
+本仓库是 [thecynetx/CyDrive](https://github.com/thecynetx/CyDrive) 的个人 Fork，在保留原项目核心架构和功能的前提下，针对中国大陆网络环境和日常使用体验做了若干改进：
+
+- **SOCKS5 代理可配置**：Telegram MTProto 连接支持通过 `config.json` 配置代理，方便需要翻墙的环境。
+- **WebDAV 端口可调**：默认端口改为 `6060`，避免与常见本地服务冲突。
+- **目录/文件重命名支持**：修复资源管理器重命名失败的问题。
+- **上传状态正确显示**：修复 Web 面板文件一直显示 `Syncing` 的问题，未成功上传显示为 `Pending`。
+- **删除同步到 Telegram**：从 `T:` 盘或 Web 面板删除文件时，同步删除 TG 频道/群组里的消息。
+- **Web 面板媒体预览优化**：修复高分辨率视频关闭按钮不可见的问题，支持点击背景或 `Esc` 关闭。
+
+详细修改列表见 [CHANGELOG.md](./CHANGELOG.md)。
+
+Original project: [https://github.com/thecynetx/CyDrive](https://github.com/thecynetx/CyDrive)
+
+> AI生成

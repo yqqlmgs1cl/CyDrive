@@ -61,6 +61,12 @@ class CyDriveConfig:
     cache_limit_gb: int = 20
     encryption_password: Optional[str] = None
     enable_encryption: bool = False
+    proxy_type: Optional[str] = "socks5"
+    proxy_host: Optional[str] = "127.0.0.1"
+    proxy_port: Optional[int] = 10808
+    proxy_username: Optional[str] = None
+    proxy_password: Optional[str] = None
+    proxy_rdns: bool = True
 
     @classmethod
     def load(cls, file_path: str = CONFIG_FILE, prompt_if_missing: bool = True) -> "CyDriveConfig":

@@ -137,9 +137,9 @@
     </div>
 
     <!-- Preview Modal -->
-    <div id="media-modal" class="modal">
-        <div class="modal-content">
-            <button class="modal-close" onclick="closeModal()">&times;</button>
+    <div id="media-modal" class="modal" onclick="closeModalOnBackground(event)">
+        <button class="modal-close" onclick="closeModal()" title="Close (Esc)">&times;</button>
+        <div class="modal-content" onclick="event.stopPropagation()">
             <h3 id="modal-title">File Preview</h3>
             <div id="modal-body"></div>
         </div>

@@ -118,7 +118,9 @@ function renderFilesTable(files) {
         const dateStr = file.mtime ? new Date(file.mtime * 1000).toLocaleDateString() : "-";
         const statusBadge = file.is_uploaded 
             ? '<span class="badge-status badge-synced"><i class="fa-solid fa-circle-check"></i> Synced</span>'
-            : '<span class="badge-status badge-uploading"><i class="fa-solid fa-rotate fa-spin"></i> Syncing</span>';
+            : (file.is_dir 
+                ? '<span class="badge-status badge-synced">-</span>'
+                : '<span class="badge-status badge-uploading" title="Only stored locally, upload not completed"><i class="fa-solid fa-triangle-exclamation"></i> Pending</span>');
 
         const isDir = Boolean(file.is_dir);
         const encName = encodeURIComponent(file.name);
@@ -196,13 +198,30 @@ function previewMedia(fileName) {
 function closeModal() {
     const modal = document.getElementById("media-modal");
     if (modal) {
-        document.getElementById("modal-body").innerHTML = "";
+        const modalBody = document.getElementById("modal-body");
+        if (modalBody) {
+            modalBody.innerHTML = "";
+        }
         modal.style.display = "none";
     }
 }
 
+function closeModalOnBackground(event) {
+    if (event.target && event.target.id === "media-modal") {
+        closeModal();
+    }
+}
+
+// Close modal with Escape key
+document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+        closeModal();
+    }
+});
+
 async function deleteFile(encodedName) {
     const fileName = decodeURIComponent(encodedName);
+    console.log("[Delete] decoded fileName:", fileName);
     if (!confirm(`Are you sure you want to delete "${fileName}" from CyDrive Cloud?`)) {
         return;
     }
@@ -214,13 +233,17 @@ async function deleteFile(encodedName) {
             body: JSON.stringify({ filename: fileName })
         });
 
+        const data = await res.json().catch(() => ({}));
+        console.log("[Delete] server response:", res.status, data);
+
         if (res.ok) {
             loadDriveData();
         } else {
-            alert("Could not delete file from cloud.");
+            alert("Could not delete file from cloud: " + (data.error || res.status));
         }
     } catch (err) {
         console.error("Delete error:", err);
+        alert("Delete request failed: " + err.message);
     }
 }
 

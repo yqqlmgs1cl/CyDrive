@@ -187,6 +187,77 @@ class MetaDatabase:
             cursor.execute("DELETE FROM files WHERE rel_path = ?", (rel_path,))
             conn.commit()
 
+    def delete_folder_recursive(self, folder_rel_path: str) -> List[Dict[str, Any]]:
+        """Delete a folder and all descendants; return deleted file records."""
+        folder_rel_path = "/" + folder_rel_path.strip("/").replace("\\", "/")
+        prefix = folder_rel_path.rstrip("/") + "/"
+
+        deleted_files = []
+        with self._get_conn() as conn:
+            cursor = conn.cursor()
+            # Collect all descendant files (non-directories) before deletion
+            cursor.execute("""
+                SELECT * FROM files
+                WHERE rel_path = ? OR rel_path LIKE ? ESCAPE '\\'
+            """, (folder_rel_path, prefix.replace("\\", "\\\\") + "%"))
+            for row in cursor.fetchall():
+                item = dict(row)
+                if not item.get("is_dir"):
+                    deleted_files.append(item)
+                # Delete associated chunks
+                if item.get("id"):
+                    cursor.execute("DELETE FROM chunks WHERE file_id = ?", (item["id"],))
+
+            # Delete all matching records
+            cursor.execute("""
+                DELETE FROM files
+                WHERE rel_path = ? OR rel_path LIKE ? ESCAPE '\\'
+            """, (folder_rel_path, prefix.replace("\\", "\\\\") + "%"))
+            conn.commit()
+        return deleted_files
+
+    def rename_path(self, old_rel_path: str, new_rel_path: str):
+        """Rename a file or folder, recursively updating children for folders."""
+        old_rel_path = "/" + old_rel_path.strip("/").replace("\\", "/")
+        new_rel_path = "/" + new_rel_path.strip("/").replace("\\", "/")
+        old_parent = "/" + os.path.dirname(old_rel_path).strip("/").replace("\\", "/") if os.path.dirname(old_rel_path).strip("/").replace("\\", "/") else "/"
+        new_parent = "/" + os.path.dirname(new_rel_path).strip("/").replace("\\", "/") if os.path.dirname(new_rel_path).strip("/").replace("\\", "/") else "/"
+        new_name = os.path.basename(new_rel_path)
+        now = time.time()
+
+        with self._get_conn() as conn:
+            cursor = conn.cursor()
+
+            # Direct rename for the target itself
+            cursor.execute("""
+                UPDATE files
+                SET rel_path = ?, parent_dir = ?, name = ?, updated_at = ?
+                WHERE rel_path = ?
+            """, (new_rel_path, new_parent, new_name, now, old_rel_path))
+
+            # If it's a directory, recursively update all children paths
+            if old_rel_path != "/":
+                old_prefix = old_rel_path.rstrip("/") + "/"
+                new_prefix = new_rel_path.rstrip("/") + "/"
+                cursor.execute("""
+                    SELECT id, rel_path, parent_dir, name FROM files
+                    WHERE rel_path LIKE ? ESCAPE '\\'
+                """, (old_prefix.replace("\\", "\\\\") + "%",))
+                rows = cursor.fetchall()
+                for row in rows:
+                    child_old_rel = row["rel_path"]
+                    child_old_parent = row["parent_dir"]
+                    child_name = row["name"]
+                    child_new_rel = child_old_rel.replace(child_old_rel, new_prefix + child_old_rel[len(old_prefix):], 1)
+                    child_new_parent = child_old_parent.replace(child_old_parent, new_prefix + child_old_parent[len(old_prefix):], 1) if child_old_parent.startswith(old_prefix) else child_old_parent
+                    cursor.execute("""
+                        UPDATE files
+                        SET rel_path = ?, parent_dir = ?, updated_at = ?
+                        WHERE id = ?
+                    """, (child_new_rel, child_new_parent, now, row["id"]))
+
+            conn.commit()
+
     def get_stats(self) -> Dict[str, Any]:
         with self._get_conn() as conn:
             cursor = conn.cursor()

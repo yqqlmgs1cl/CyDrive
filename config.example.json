@@ -1,4 +1,10 @@
 {
     "bot_token": "YOUR_TELEGRAM_BOT_TOKEN_HERE",
-    "chat_id": 123456789
+    "chat_id": 123456789,
+    "proxy_type": "socks5",
+    "proxy_host": "127.0.0.1",
+    "proxy_port": 10808,
+    "proxy_username": null,
+    "proxy_password": null,
+    "proxy_rdns": true
 }

@@ -70,8 +70,30 @@ class CyWebDashboard:
                 return web.json_response({"error": "No filename provided"}, status=400)
             
             clean_rel = "/" + filename.strip("/").replace("\\", "/")
-            self.db.delete_file(clean_rel)
-            self.db.delete_file(filename)
+            print(f"🗑️ [Web UI Delete] Requested delete for: raw={filename!r}, clean_rel={clean_rel!r}")
+            
+            # Try to find record by rel_path
+            file_record = self.db.get_file(clean_rel)
+            if not file_record:
+                # Fallback: try matching by name at root
+                all_files = self.db.list_all_files()
+                for f in all_files:
+                    if f.get("rel_path") == clean_rel or f.get("name") == filename.strip("/\\"):
+                        clean_rel = f["rel_path"]
+                        file_record = f
+                        break
+            
+            if file_record:
+                print(f"🗑️ [Web UI Delete] Found record: rel_path={file_record.get('rel_path')!r}, msg_id={file_record.get('telegram_msg_id')}")
+                if self.telegram_engine and self.telegram_engine.is_connected:
+                    try:
+                        await self.telegram_engine.delete_file_messages(file_record)
+                    except Exception as e:
+                        print(f"⚠️ [Web UI Delete] Could not delete Telegram messages for {clean_rel}: {e}")
+                self.db.delete_file(file_record.get("rel_path", clean_rel))
+            else:
+                print(f"⚠️ [Web UI Delete] No record found for {clean_rel}, attempting delete anyway")
+                self.db.delete_file(clean_rel)
 
             # Clean cache if any
             local_path = os.path.join(self.config.cache_path, filename.lstrip("/\\"))
@@ -81,8 +103,10 @@ class CyWebDashboard:
                 except OSError:
                     pass
 
-            return web.json_response({"success": True, "deleted": filename})
+            return web.json_response({"success": True, "deleted": clean_rel})
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             return web.json_response({"error": str(e)}, status=500)
 
     async def upload_handler(self, request):

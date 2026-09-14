@@ -16,14 +16,33 @@ class TelegramSyncEngine:
     def __init__(self, config: CyDriveConfig, db: MetaDatabase):
         self.config = config
         self.db = db
-        self.client = TelegramClient(
-            "cynet_bot_session",
-            config.api_id,
-            config.api_hash
-        )
+        self.client = self._create_telegram_client()
         self.is_connected = False
         self.loop = self.client.loop
         self.on_file_received_callback: Optional[Callable] = None
+
+    def _create_telegram_client(self) -> TelegramClient:
+        """Create TelegramClient with optional proxy from config."""
+        proxy = None
+        if getattr(self.config, "proxy_type", None):
+            proxy_type = self.config.proxy_type.lower().strip()
+            host = getattr(self.config, "proxy_host", "127.0.0.1") or "127.0.0.1"
+            port = getattr(self.config, "proxy_port", 10808) or 10808
+            rdns = getattr(self.config, "proxy_rdns", True)
+            username = getattr(self.config, "proxy_username", None)
+            password = getattr(self.config, "proxy_password", None)
+
+            if username and password:
+                proxy = (proxy_type, host, int(port), bool(rdns), username, password)
+            else:
+                proxy = (proxy_type, host, int(port), bool(rdns))
+
+        return TelegramClient(
+            "cynet_bot_session",
+            self.config.api_id,
+            self.config.api_hash,
+            proxy=proxy
+        )
 
     async def start(self):
         """Starts the Telethon client with bot token."""
@@ -140,7 +159,7 @@ class TelegramSyncEngine:
                     lines.append(f"{icon} `{item['name']}` ({size_kb} KB)")
                 await event.respond("\n".join(lines))
 
-    async def upload_file(self, local_path: str, rel_path: str, progress_callback: Optional[Callable] = None) -> Optional[int]:
+    async def upload_file(self, local_path: str, rel_path: str, progress_callback: Optional[Callable] = None, delete_source: bool = False) -> Optional[int]:
         """Uploads a local file to Telegram, supporting large file chunking (>2GB) and AES encryption."""
         if not os.path.exists(local_path):
             return None
@@ -283,7 +302,7 @@ class TelegramSyncEngine:
         except FloodWaitError as e:
             print(f"⏳ [Telegram Rate Limit] FloodWait for {e.seconds}s. Auto-waiting...")
             await asyncio.sleep(e.seconds)
-            return await self.upload_file(local_path, rel_path, progress_callback)
+            return await self.upload_file(local_path, rel_path, progress_callback, delete_source=delete_source)
         except Exception as e:
             print(f"❌ [Telegram Upload Error] Failed to upload {file_name}: {e}")
             return None
@@ -295,13 +314,40 @@ class TelegramSyncEngine:
                 except OSError:
                     pass
 
-            # Immediately remove temporary local upload buffer
-            try:
-                if os.path.exists(local_path):
+            # Immediately remove temporary local upload buffer only if requested
+            if delete_source and os.path.exists(local_path):
+                try:
                     os.remove(local_path)
                     print(f"🧹 [Zero-Disk Storage] Local temporary buffer deleted. 0 Bytes used on your hard drive.")
-            except OSError:
-                pass
+                except OSError:
+                    pass
+
+    async def delete_file_messages(self, file_record: Dict[str, Any]) -> bool:
+        """Delete Telegram message(s) associated with a file record."""
+        file_id = file_record.get("id")
+        chunk_count = file_record.get("chunk_count", 1) or 1
+        msg_ids = set()
+
+        if chunk_count > 1 and file_id:
+            chunks = self.db.get_chunks_by_file_id(file_id)
+            for chunk in chunks:
+                if chunk.get("telegram_msg_id"):
+                    msg_ids.add(chunk["telegram_msg_id"])
+
+        main_msg_id = file_record.get("telegram_msg_id")
+        if main_msg_id:
+            msg_ids.add(main_msg_id)
+
+        if not msg_ids:
+            return True
+
+        try:
+            await self.client.delete_messages(self.config.chat_id, list(msg_ids))
+            print(f"🗑️ [Telegram] Deleted {len(msg_ids)} message(s) for {file_record.get('name')}")
+            return True
+        except Exception as e:
+            print(f"⚠️ [Telegram Delete Warning] Could not delete messages {msg_ids}: {e}")
+            return False
 
     async def download_file_by_id(self, msg_id: int, dest_path: str, progress_callback: Optional[Callable] = None) -> bool:
         """Downloads a specific message media by its Telegram message ID."""
