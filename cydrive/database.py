@@ -187,6 +187,44 @@ class MetaDatabase:
             cursor.execute("DELETE FROM files WHERE rel_path = ?", (rel_path,))
             conn.commit()
 
+    def delete_by_msg_ids(self, msg_ids) -> int:
+        """Delete file records whose telegram_msg_id (or chunk msg_id) matches any of the given ids.
+        Returns the number of file records removed."""
+        if not msg_ids:
+            return 0
+        msg_ids = list(set(int(m) for m in msg_ids if m is not None))
+        if not msg_ids:
+            return 0
+
+        removed = 0
+        with self._get_conn() as conn:
+            cursor = conn.cursor()
+            placeholders = ",".join("?" for _ in msg_ids)
+
+            # Find files whose main message was deleted
+            cursor.execute(
+                f"SELECT id FROM files WHERE telegram_msg_id IN ({placeholders})",
+                msg_ids
+            )
+            file_ids = [row["id"] for row in cursor.fetchall()]
+
+            # Also find files whose chunk messages were deleted (multi-part files)
+            cursor.execute(
+                f"SELECT DISTINCT file_id FROM chunks WHERE telegram_msg_id IN ({placeholders})",
+                msg_ids
+            )
+            file_ids.extend(row["file_id"] for row in cursor.fetchall())
+
+            file_ids = list(set(file_ids))
+            for file_id in file_ids:
+                cursor.execute("DELETE FROM chunks WHERE file_id = ?", (file_id,))
+                cursor.execute("DELETE FROM files WHERE id = ?", (file_id,))
+                removed += 1
+
+            if removed:
+                conn.commit()
+        return removed
+
     def delete_folder_recursive(self, folder_rel_path: str) -> List[Dict[str, Any]]:
         """Delete a folder and all descendants; return deleted file records."""
         folder_rel_path = "/" + folder_rel_path.strip("/").replace("\\", "/")

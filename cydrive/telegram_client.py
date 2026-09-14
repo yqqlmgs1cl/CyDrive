@@ -51,10 +51,42 @@ class TelegramSyncEngine:
             await self.client.start(bot_token=self.config.bot_token)
             self.is_connected = True
             self._register_handlers()
+
+            # 预热实体缓存：bot 账号无法调用 GetDialogs（用户账号专属）。
+            # 超级群组/频道(-100开头)用 GetChannelsRequest（bot 允许 access_hash=0 查询）；
+            # 普通群组(-开头但非-100)直接 get_entity 即可。
+            try:
+                chat_id_int = int(self.config.chat_id)
+                if chat_id_int <= -1000000000000:
+                    # -100 开头：超级群组/频道，剥离 -100 前缀得到原始 channel_id
+                    raw_channel_id = abs(chat_id_int) - 10**12
+                    from telethon.tl.types import InputChannel
+                    from telethon.tl.functions.channels import GetChannelsRequest
+                    result = await self.client(GetChannelsRequest(channel=[InputChannel(raw_channel_id, 0)]))
+                    if result.chats:
+                        title = result.chats[0].title or str(raw_channel_id)
+                        print(f"🎯 [Telegram] Target chat verified: {title} ({self.config.chat_id})")
+                    else:
+                        raise ValueError("channel not found in response")
+                elif chat_id_int < -1000000000000 or chat_id_int < 0:
+                    # 普通群组（-开头，非-100前缀）或用户
+                    entity = await self.client.get_entity(self.config.chat_id)
+                    title = getattr(entity, "title", None) or str(entity.id)
+                    print(f"🎯 [Telegram] Target chat verified: {title} ({self.config.chat_id})")
+                else:
+                    entity = await self.client.get_entity(self.config.chat_id)
+                    title = getattr(entity, "title", None) or str(entity.id)
+                    print(f"🎯 [Telegram] Target chat verified: {title} ({self.config.chat_id})")
+            except Exception as e:
+                self.is_connected = False
+                print(f"❌ [Telegram Error] Cannot access target chat {self.config.chat_id}: {e}")
+                print("   请检查: 1) 新 bot 是否已加入该频道（需以管理员身份把 bot 添加进频道）")
+                print("           2) chat_id 是否就是该频道的 -100 开头 ID")
+                print("           3) 若刚把 bot 拉进频道，重启一次程序让其缓存频道信息")
+
             me = await self.client.get_me()
             print(f"🤖 [Telegram] Connected as @{me.username} (ID: {me.id})")
-        except AccessTokenInvalidError:
-            print("❌ [Telegram Error] The provided Bot Token is invalid! Run `python main.py setup` to update.")
+        except AccessTokenInvalidError:            print("❌ [Telegram Error] The provided Bot Token is invalid! Run `python main.py setup` to update.")
         except ApiIdInvalidError:
             print("❌ [Telegram Error] Invalid Telegram API ID/Hash.")
         except Exception as e:
@@ -70,6 +102,21 @@ class TelegramSyncEngine:
                 await self._process_incoming_file(event)
             elif event.message and event.message.text:
                 await self._process_bot_command(event)
+
+        # 2. Handle deleted messages from Telegram (best-effort sync)
+        # 注意：Telegram 对 bot 的删除事件通知范围有限（通常仅限 bot 自己发的消息），
+        # 用户在客户端删除自己上传的文件时 bot 可能收不到通知，此监听仅覆盖能收到的部分。
+        @self.client.on(events.MessageDeleted())
+        async def handle_deleted(event):
+            try:
+                deleted_ids = set(event.deleted_ids or [])
+                if not deleted_ids:
+                    return
+                removed = self.db.delete_by_msg_ids(deleted_ids)
+                if removed:
+                    print(f"🗑️ [TG Delete Sync] Removed {removed} local record(s) matching deleted Telegram messages: {sorted(deleted_ids)}")
+            except Exception as e:
+                print(f"⚠️ [TG Delete Sync] Error handling deleted messages: {e}")
 
     async def _process_incoming_file(self, event):
         """Indexes incoming Telegram media metadata without downloading payload to disk (Pure Virtual Cloud)."""
@@ -161,6 +208,7 @@ class TelegramSyncEngine:
 
     async def upload_file(self, local_path: str, rel_path: str, progress_callback: Optional[Callable] = None, delete_source: bool = False) -> Optional[int]:
         """Uploads a local file to Telegram, supporting large file chunking (>2GB) and AES encryption."""
+        self._upload_succeeded = False
         if not os.path.exists(local_path):
             return None
 
@@ -262,6 +310,7 @@ class TelegramSyncEngine:
                     )
 
                     print(f"✅ [CLOUD UPLOAD] Successfully uploaded all {chunk_count} parts of {file_name} to Telegram Cloud!")
+                    self._upload_succeeded = True
                     return first_msg_id
                 finally:
                     shutil.rmtree(chunk_dir, ignore_errors=True)
@@ -297,6 +346,7 @@ class TelegramSyncEngine:
                 chunk_count=1
             )
             print(f"✅ [CLOUD UPLOAD] Successfully uploaded {file_name} ({file_size // 1024} KB) to Telegram Cloud!")
+            self._upload_succeeded = True
             return msg.id
 
         except FloodWaitError as e:
@@ -305,6 +355,7 @@ class TelegramSyncEngine:
             return await self.upload_file(local_path, rel_path, progress_callback, delete_source=delete_source)
         except Exception as e:
             print(f"❌ [Telegram Upload Error] Failed to upload {file_name}: {e}")
+            # 上传失败时保留本地缓存文件，避免源文件被误删（成功时由 delete_source 决定是否删除）
             return None
         finally:
             # Clean up temp encrypted file if created
@@ -314,8 +365,8 @@ class TelegramSyncEngine:
                 except OSError:
                     pass
 
-            # Immediately remove temporary local upload buffer only if requested
-            if delete_source and os.path.exists(local_path):
+            # 仅在明确要求且上传成功时删除本地源文件
+            if delete_source and os.path.exists(local_path) and self._upload_succeeded:
                 try:
                     os.remove(local_path)
                     print(f"🧹 [Zero-Disk Storage] Local temporary buffer deleted. 0 Bytes used on your hard drive.")
