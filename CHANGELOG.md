@@ -3,10 +3,10 @@ AIGC:
   ContentProducer: '001191110102MAD55U9H0F10002'
   ContentPropagator: '001191110102MAD55U9H0F10002'
   Label: '1'
-  ProduceID: 'b5d06d38-389a-4ea3-95bf-ecae7c269c43'
-  PropagateID: 'b5d06d38-389a-4ea3-95bf-ecae7c269c43'
-  ReservedCode1: '06c5b393-0566-40d5-b750-e7698b69af15'
-  ReservedCode2: '06c5b393-0566-40d5-b750-e7698b69af15'
+  ProduceID: '8636ae72-0f53-41b1-82be-e084f940bb1e'
+  PropagateID: '8636ae72-0f53-41b1-82be-e084f940bb1e'
+  ReservedCode1: '3d965b06-be6c-4b2c-aace-cced8fd176d3'
+  ReservedCode2: '3d965b06-be6c-4b2c-aace-cced8fd176d3'
 ---
 
 # CyDrive 改进日志
@@ -14,6 +14,20 @@ AIGC:
 本项目 fork 自 [thecynetx/CyDrive](https://github.com/thecynetx/CyDrive)，在保留原作者功能的基础上，针对国内网络环境和实际使用体验做了以下改进。
 
 ## 主要改进
+
+### 0a. WebDAV 文件名安全化（2026-09 新增）
+- 修复部分客户端上传含半角 `? : " < > | * \` 等字符的文件名时后端 500（`OSError(22)`）的问题。
+- 典型场景：Windows 上 rclone local 后端读 RaiDrive 等虚拟盘时，会把源端呈现的全角 `？：＂` 还原成半角非法字符再 PUT，原版 CyDrive 直接 `open()` 建缓存文件即崩溃。
+- 现在所有本地缓存路径逐级安全化：非法半角字符自动替换为对应全角字符（`?` → `？`），Windows 保留设备名（CON/PRN/AUX/NUL/COM1-9/LPT1-9）加前缀兜底，结尾空格/点清除。
+- 发往 Telegram 的文件名与标题同步安全化，TG 端文件名与虚拟盘显示一致。
+- `begin_write` 失败时返回 403 可读错误并附原因，不再返回盲目重试也无法解决的 500。
+- 相关文件：`cydrive/cache_manager.py`, `cydrive/telegram_client.py`, `cydrive/webdav_server.py`。
+
+### 0b. 上传队列反压与自动重试（2026-09 新增）
+- 反压：WebDAV 写入完成后触发的上传，在途数量 ≥8 时自动等待（最长 600s），防止 rclone/NAS 批量拷贝淹没本地缓存。
+- 重试：单文件上传失败自动重试 3 次（间隔 10/20/30s），FloodWait 按服务端要求等待后重试。
+- 连接韧性：`TelegramClient` 增加 `connection_retries=10, retry_delay=3, timeout=60, flood_sleep_threshold=120`。
+- 相关文件：`cydrive/webdav_server.py`, `cydrive/telegram_client.py`。
 
 ### 0. 启动频道验证与双向删除同步（2026-09 新增）
 - 启动时用 bot 兼容 API 验证目标频道/群组可达，杜绝 `Could not find the input entity` 首次上传报错。

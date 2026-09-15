@@ -1,6 +1,35 @@
 import os
+import re
 import time
 from typing import Optional, List
+
+# Windows 文件名非法字符：< > : " / \ | ? *
+# 某些 WebDAV 客户端（如 rclone local 后端在 Windows 上的受限字符还原机制）
+# 会把源端呈现的全角 ？：＂ 等还原成半角非法字符再 PUT 过来，
+# 导致后端 open() 直接 OSError(22)。这里统一替换为对应全角字符。
+_WINDOWS_ILLEGAL_RE = re.compile(r'[\x00-\x1f]')
+# 供 str.translate 使用：键为单字符，值为对应全角字符
+_FULLWIDTH_MAP = str.maketrans({
+    '<': '＜', '>': '＞', ':': '：', '"': '＂',
+    '/': '／', '\\': '＼', '|': '｜', '?': '？', '*': '＊',
+})
+
+
+def sanitize_filename_component(name: str) -> str:
+    """把单个文件/目录名中的 Windows 非法半角字符替换为全角，返回可安全落盘的名字。"""
+    if not name:
+        return name
+    # 半角非法字符 -> 全角（translate 按码点映射，语义正确）
+    sanitized = name.translate(_FULLWIDTH_MAP)
+    # 控制字符兜底替换
+    sanitized = _WINDOWS_ILLEGAL_RE.sub('_', sanitized)
+    # Windows 保留设备名兜底（CON、PRN、AUX、NUL、COM1-9、LPT1-9）
+    stem = sanitized.split('.')[0].upper()
+    if stem in {'CON', 'PRN', 'AUX', 'NUL'} or (len(stem) == 4 and stem[:3] in {'COM', 'LPT'} and stem[3].isdigit()):
+        sanitized = '_' + sanitized
+    # Windows 不允许文件名以空格或点结尾
+    return sanitized.rstrip(' .') or '_'
+
 
 class CacheManager:
     """Smart On-Demand LRU Cache Manager for CyDrive."""
@@ -12,9 +41,10 @@ class CacheManager:
 
     def get_local_path(self, rel_path: str) -> str:
         """Returns the absolute path inside the cache for a given relative path."""
-        # Sanitize relative path
+        # 逐级安全化：rclone/浏览器等客户端可能传来 Windows 非法字符
         clean_rel = rel_path.lstrip("/\\")
-        full_path = os.path.join(self.cache_dir, clean_rel)
+        sanitized_parts = [sanitize_filename_component(p) for p in clean_rel.replace("\\", "/").split("/") if p]
+        full_path = os.path.join(self.cache_dir, *sanitized_parts)
         os.makedirs(os.path.dirname(full_path), exist_ok=True)
         return full_path
 

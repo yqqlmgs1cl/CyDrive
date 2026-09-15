@@ -93,7 +93,13 @@ class VirtualTelegramFile(DAVNonCollection):
         rel_path = self.path
         local_cached = self.cache_mgr.get_local_path(rel_path)
         os.makedirs(os.path.dirname(local_cached), exist_ok=True)
-        self._write_file_handle = open(local_cached, "wb")
+        try:
+            self._write_file_handle = open(local_cached, "wb")
+        except OSError as e:
+            # 文件名经 cache_manager.sanitize_filename_component 处理后理论上不会再发生；
+            # 兜底给出可读错误，避免 500 内部错误让客户端盲目重试
+            raise DAVError(HTTP_FORBIDDEN, self.path,
+                           f"Cannot create local cache file for '{rel_path}': {e}")
         return self._write_file_handle
 
     def end_write(self, with_errors: bool):
@@ -137,23 +143,43 @@ class VirtualTelegramFile(DAVNonCollection):
                     import asyncio
                     loop = getattr(self.telegram_engine, "loop", None) or self.telegram_engine.client.loop
                     if loop and loop.is_running():
+                        # Backpressure: wait until in-flight uploads drop below the limit,
+                        # so rclone/NAS bulk copies cannot flood the local cache faster
+                        # than the bot's single MTProto channel can drain it.
+                        max_inflight = getattr(self.telegram_engine, "max_inflight_uploads", 8)
+                        inflight = getattr(self.telegram_engine, "inflight_uploads", 0)
+                        waited = 0
+                        while inflight >= max_inflight and waited < 600:
+                            if waited == 0:
+                                print(f"⏳ [Upload Backpressure] {inflight}/{max_inflight} uploads in flight, waiting for queue to drain...")
+                            time.sleep(2)
+                            waited += 2
+                            inflight = getattr(self.telegram_engine, "inflight_uploads", 0)
+                        if inflight >= max_inflight:
+                            print(f"⚠️ [Upload Backpressure] Queue still full after {waited}s; proceeding anyway (cached locally, safe to retry later).")
+
                         print(f"📤 [WebDAV Upload Trigger] Queuing {clean_path} ({file_size // 1024} KB) for Telegram Cloud upload...")
                         try:
+                            self.telegram_engine.inflight_uploads = getattr(self.telegram_engine, "inflight_uploads", 0) + 1
                             future = asyncio.run_coroutine_threadsafe(
                                 self.telegram_engine.upload_file(local_cached, clean_path, delete_source=True),
                                 loop
                             )
                             def _on_upload_done(fut):
                                 try:
-                                    msg_id = fut.result(timeout=300)
+                                    self.telegram_engine.inflight_uploads = max(0, getattr(self.telegram_engine, "inflight_uploads", 1) - 1)
+                                    msg_id = fut.result(timeout=600)
                                     if msg_id:
                                         print(f"✅ [WebDAV Upload Done] {clean_path} -> Telegram msg_id {msg_id}")
                                     else:
                                         print(f"❌ [WebDAV Upload Failed] {clean_path} did not return msg_id")
                                 except Exception as e:
                                     print(f"❌ [WebDAV Upload Callback Error] {clean_path}: {e}")
+                                finally:
+                                    self.telegram_engine.inflight_uploads = max(0, getattr(self.telegram_engine, "inflight_uploads", 1) - 1)
                             future.add_done_callback(_on_upload_done)
                         except Exception as e:
+                            self.telegram_engine.inflight_uploads = max(0, getattr(self.telegram_engine, "inflight_uploads", 1) - 1)
                             print(f"⚠️ [WebDAV Upload Error] Could not schedule upload for {clean_path}: {e}")
                     else:
                         print("⚠️ [WebDAV Warning] Telegram event loop is not running.")

@@ -9,6 +9,7 @@ from telethon.errors import FloodWaitError, AccessTokenInvalidError, ApiIdInvali
 from cydrive.config import CyDriveConfig
 from cydrive.database import MetaDatabase
 from cydrive.chunker import FileChunker
+from cydrive.cache_manager import sanitize_filename_component
 
 class TelegramSyncEngine:
     """Telethon MTProto Engine for fast uploads, downloads, and bot commands."""
@@ -41,7 +42,11 @@ class TelegramSyncEngine:
             "cynet_bot_session",
             self.config.api_id,
             self.config.api_hash,
-            proxy=proxy
+            proxy=proxy,
+            connection_retries=10,
+            retry_delay=3,
+            timeout=60,
+            flood_sleep_threshold=120
         )
 
     async def start(self):
@@ -206,8 +211,26 @@ class TelegramSyncEngine:
                     lines.append(f"{icon} `{item['name']}` ({size_kb} KB)")
                 await event.respond("\n".join(lines))
 
-    async def upload_file(self, local_path: str, rel_path: str, progress_callback: Optional[Callable] = None, delete_source: bool = False) -> Optional[int]:
-        """Uploads a local file to Telegram, supporting large file chunking (>2GB) and AES encryption."""
+    async def upload_file(self, local_path: str, rel_path: str, progress_callback: Optional[Callable] = None, delete_source: bool = False, max_retries: int = 3) -> Optional[int]:
+        """Uploads a local file to Telegram, supporting large file chunking (>2GB) and AES encryption.
+        Failed uploads are retried up to max_retries times with increasing delay."""
+        last_error = None
+        for attempt in range(1, max_retries + 1):
+            result = await self._upload_file_once(local_path, rel_path, progress_callback, delete_source)
+            if result is not None:
+                if attempt > 1:
+                    print(f"✅ [Retry Success] {rel_path} uploaded on attempt {attempt}/{max_retries}")
+                return result
+            last_error = f"attempt {attempt}/{max_retries} returned no msg_id"
+            if attempt < max_retries:
+                wait_seconds = 10 * attempt
+                print(f"⏳ [Upload Retry] {os.path.basename(rel_path)} failed ({last_error}). Retrying in {wait_seconds}s...")
+                await asyncio.sleep(wait_seconds)
+        print(f"❌ [Upload Failed Permanently] {rel_path} after {max_retries} attempts. Last error: {last_error}")
+        return None
+
+    async def _upload_file_once(self, local_path: str, rel_path: str, progress_callback: Optional[Callable] = None, delete_source: bool = False) -> Optional[int]:
+        """Single upload attempt (called by upload_file with retry logic)."""
         self._upload_succeeded = False
         if not os.path.exists(local_path):
             return None
@@ -219,7 +242,8 @@ class TelegramSyncEngine:
 
         file_size = os.path.getsize(local_path)
         clean_rel = "/" + rel_path.strip("/").replace("\\", "/")
-        file_name = os.path.basename(clean_rel)
+        # 发往 Telegram 的文件名同样需要安全化（TG 允许 ? : 但保持与本地缓存/T: 盘显示一致）
+        file_name = sanitize_filename_component(os.path.basename(clean_rel))
         if not file_name:
             file_name = os.path.basename(local_path)
 
@@ -352,7 +376,7 @@ class TelegramSyncEngine:
         except FloodWaitError as e:
             print(f"⏳ [Telegram Rate Limit] FloodWait for {e.seconds}s. Auto-waiting...")
             await asyncio.sleep(e.seconds)
-            return await self.upload_file(local_path, rel_path, progress_callback, delete_source=delete_source)
+            return await self._upload_file_once(local_path, rel_path, progress_callback, delete_source)
         except Exception as e:
             print(f"❌ [Telegram Upload Error] Failed to upload {file_name}: {e}")
             # 上传失败时保留本地缓存文件，避免源文件被误删（成功时由 delete_source 决定是否删除）
