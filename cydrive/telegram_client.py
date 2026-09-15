@@ -352,6 +352,7 @@ class TelegramSyncEngine:
                 upload_path,
                 caption=caption,
                 file_name=file_name,
+                supports_streaming=True,
                 progress_callback=progress_callback
             )
             
